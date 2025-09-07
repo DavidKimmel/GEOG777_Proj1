@@ -1,0 +1,93 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8"/>
+  <meta name="viewport" content="width=device-width, initial-scale=1"/>
+  <title>Nitrate ↔ Cancer Explorer</title>
+  <link rel="stylesheet" href="https://unpkg.com/leaflet/dist/leaflet.css"/>
+  <link rel="stylesheet" href="https://unpkg.com/leaflet.markercluster@1.5.3/dist/MarkerCluster.css"/>
+  <link rel="stylesheet" href="https://unpkg.com/leaflet.markercluster@1.5.3/dist/MarkerCluster.Default.css"/>
+  <link rel="stylesheet" href="/static/style.css"/>
+</head>
+<body>
+  <header class="topbar">
+    <div class="brand">Nitrate ↔ Cancer Explorer</div>
+    <div class="top-actions">
+      <label class="toggle">
+        <input id="themeToggle" type="checkbox"/> <span>Dark mode</span>
+      </label>
+    </div>
+  </header>
+
+  <aside id="sidebar">
+    <div class="section">
+      <h3>Basemap</h3>
+      <div class="row">
+        <label><input type="radio" name="basemap" value="osm" checked/> OSM</label>
+        <label><input type="radio" name="basemap" value="light"/> Light</label>
+        <label><input type="radio" name="basemap" value="dark"/> Dark</label>
+      </div>
+    </div>
+
+    <div class="section">
+      <h3>Data layers</h3>
+      <label class="row"><input id="toggleTracts" type="checkbox" checked/> Tracts: cancer rate (choropleth)</label>
+      <div class="subrow">
+        <label>Opacity <input id="tractsOpacity" type="range" min="0" max="1" step="0.05" value="0.7"/></label>
+        <label>Method
+          <select id="choroplethMethod">
+            <option value="quantile" selected>Quantile</option>
+            <option value="equal">Equal interval</option>
+          </select>
+        </label>
+      </div>
+      <label class="row"><input id="toggleWells" type="checkbox" checked/> Wells: nitrate (points)</label>
+      <div class="subrow">
+        <label>Size <input id="pointSize" type="range" min="2" max="12" step="1" value="6"/></label>
+        <label><input id="clusterToggle" type="checkbox" checked/> Cluster points</label>
+      </div>
+      <label class="row"><input id="toggleRaster" type="checkbox"/> Raster overlay (IDW)</label>
+      <div class="subrow">
+        <label>Opacity <input id="rasterOpacity" type="range" min="0" max="1" step="0.05" value="0.6"/></label>
+      </div>
+    </div>
+
+    <div class="section">
+      <h3>Analysis (IDW)</h3>
+      <label class="row">k (power) <input id="k" type="range" min="1" max="5" step="0.1" value="2.0"/> <span id="kval">2.0</span></label>
+      <label class="row">Neighbors <input id="neighbors" type="number" min="4" max="32" value="12"/></label>
+      <label class="row">Cell size (m)
+        <select id="cell">
+          <option>500</option>
+          <option selected>1000</option>
+          <option>1500</option>
+        </select>
+      </label>
+      <div class="buttons">
+        <button id="run">Run</button>
+        <button id="runSens">Sensitivity</button>
+        <a class="btn" id="dlCSV" download>Download CSV</a>
+        <a class="btn" id="dlPNG" download>Download PNG</a>
+      </div>
+      <div id="stats" class="stats"></div>
+    </div>
+
+    <div class="section">
+      <h3>Legend</h3>
+      <div id="legend"></div>
+      <div id="legend-wells" style="margin-top:10px;"></div>
+
+    </div>
+  </aside>
+
+  <main id="map"></main>
+
+  <footer class="bottombar">
+    <div id="status">Ready.</div>
+  </footer>
+
+  <script src="https://unpkg.com/leaflet/dist/leaflet.js"></script>
+  <script src="https://unpkg.com/leaflet.markercluster@1.5.3/dist/leaflet.markercluster.js"></script>
+  <script src="/static/ui.js"></script>
+</body>
+</html>

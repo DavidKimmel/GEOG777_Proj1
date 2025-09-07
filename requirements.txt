@@ -1,0 +1,9 @@
+flask
+geopandas
+pandas
+numpy
+shapely
+rasterio
+scipy
+statsmodels
+pillow
