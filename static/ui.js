@@ -1,8 +1,6 @@
 // ui.js — GEOG 577 Project 1 (Flask + Leaflet)
-// end-to-end wiring for IDW → zonal → OLS with raster overlay
-// Includes: raster z-order toggle (#rasterOnTop), sensitivity table rendering,
-// sidebar collapse with persistence, "Clear raster" button, and runtime
-// injection of missing UI controls if the template is out of sync.
+// IDW → zonal → OLS with raster overlay
+// Now using Jenks (natural breaks) with 5 classes for the cancer choropleth.
 
 (function () {
   // ---------- small helpers ----------
@@ -58,26 +56,79 @@
   }
 
   // ---------- classification helpers ----------
-  function quantiles(values, k) {
-    const v = values.filter(Number.isFinite).sort((a, b) => a - b);
-    const qs = [];
-    for (let i = 1; i < k; i++) {
-      const pos = (v.length - 1) * i / k;
-      const base = Math.floor(pos);
-      const rest = pos - base;
-      qs.push(v[base] + (v[base + 1] - v[base]) * rest);
-    }
-    return qs;
-  }
-  function equalBreaks(min, max, k) {
-    const out = []; const step = (max - min) / k;
-    for (let i = 1; i < k; i++) out.push(min + step * i);
-    return out;
-  }
   function classify(value, breaks) {
     let i = 0;
     for (; i < breaks.length; i++) { if (value <= breaks[i]) return i; }
     return breaks.length;
+  }
+
+  // Jenks (natural breaks) using dynamic programming.
+  // Returns thresholds array of length (k-1), e.g., for k=5 ⇒ 4 thresholds.
+  function jenksThresholds(values, k) {
+    const data = values.filter(Number.isFinite).slice().sort((a,b)=>a-b);
+    const n = data.length;
+    if (n === 0 || k < 2) return [];
+    if (k > n) k = n;
+
+    // matrices
+    const mat1 = Array.from({length: n+1}, () => Array(k+1).fill(0));
+    const mat2 = Array.from({length: n+1}, () => Array(k+1).fill(0));
+
+    for (let i=1; i<=k; i++) {
+      mat1[0][i] = 1; mat2[0][i] = 0;
+      for (let j=1; j<=n; j++) mat2[j][i] = Infinity;
+    }
+    for (let j=1; j<=n; j++) {
+      mat1[j][1] = 1; mat2[j][1] = 0;
+    }
+
+    // DP
+    for (let l=2; l<=n; l++) {
+      let s1=0, s2=0, w=0;
+      for (let m=1; m<=l; m++) {
+        const i3 = l - m + 1;
+        const val = data[i3-1];
+        s1 += val;
+        s2 += val*val;
+        w += 1;
+        const v = s2 - (s1*s1)/w; // variance
+        if (i3 !== 1) {
+          for (let j=2; j<=k; j++) {
+            if (mat2[l][j] >= (v + mat2[i3-1][j-1])) {
+              mat1[l][j] = i3;
+              mat2[l][j] = v + mat2[i3-1][j-1];
+            }
+          }
+        }
+      }
+      mat1[l][1] = 1;
+      mat2[l][1] = s2 - (s1*s1)/w;
+    }
+
+    // backtrack to get class breaks (full list includes min/max)
+    const breaks = Array(k+1).fill(0);
+    breaks[k] = data[n-1];
+    breaks[0] = data[0];
+
+    let countNum = k;
+    let kclass = n;
+    while (countNum > 1) {
+      const id = mat1[kclass][countNum] - 2; // index for break
+      breaks[countNum - 1] = data[id];
+      kclass = mat1[kclass][countNum] - 1;
+      countNum--;
+    }
+
+    // convert to threshold list (exclude min, include internal breaks, exclude max)
+    const uniq = [];
+    for (let i=1; i<breaks.length-1; i++) {
+      const b = breaks[i];
+      if (!uniq.length || b !== uniq[uniq.length-1]) uniq.push(b);
+    }
+    // ensure we have exactly k-1 thresholds (pad or slice if needed)
+    while (uniq.length > k-1) uniq.pop();
+    while (uniq.length < k-1) uniq.push(breaks[breaks.length-2]); // duplicate last internal break
+    return uniq;
   }
 
   // ---------- page setup ----------
@@ -85,13 +136,15 @@
     setStatus('Booting UI…');
 
     // map + base layers
-    const map = L.map('map', { zoomControl: true }).setView([44.5, -89.9], 7);
+    const map = L.map('map', { zoomControl: false }).setView([44.5, -89.9], 7);
     const base = {
       osm:   L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png',              { maxZoom: 19, attribution: '© OpenStreetMap' }),
       light: L.tileLayer('https://{s}.basemaps.cartocdn.com/light_all/{z}/{x}/{y}{r}.png',  { attribution: '© OpenStreetMap, © CARTO' }),
       dark:  L.tileLayer('https://{s}.basemaps.cartocdn.com/dark_all/{z}/{x}/{y}{r}.png',   { attribution: '© OpenStreetMap, © CARTO' })
     };
     base.osm.addTo(map);
+    // Right-side zoom control (so it doesn't fight the sidebar handle)
+    L.control.zoom({ position: 'topright' }).addTo(map);
 
     // Create a dedicated pane for the IDW raster
     map.createPane('idwPane');
@@ -103,7 +156,6 @@
     const wellsToggle   = document.getElementById('toggleWells');
     const rasterToggle  = document.getElementById('toggleRaster');
     const tractsOpacity = document.getElementById('tractsOpacity');
-    const methodSel     = document.getElementById('choroplethMethod');
     const pointSize     = document.getElementById('pointSize');
     const clusterToggle = document.getElementById('clusterToggle');
     if (clusterToggle) clusterToggle.checked = false; // default clustering OFF
@@ -121,46 +173,11 @@
     const dlSens     = document.getElementById('dlSens');
     const statsEl    = document.getElementById('stats');
 
-    // Sensitivity table targets — optional; if missing, we fall back to #sensitivity text div
+    // Sensitivity table targets (optional)
     const sensTable  = document.getElementById('sensTable');
     const sensTbody  = sensTable ? sensTable.querySelector('tbody') : null;
     const sensEmpty  = document.getElementById('sensEmpty');
     const sensTextDiv= document.getElementById('sensitivity'); // legacy fallback
-
-    // --- ensure the two buttons exist even if template is old ---
-    // Sidebar toggle
-    let sidebarToggle = document.getElementById('sidebarToggle');
-    if (!sidebarToggle) {
-      const sidebar = document.getElementById('sidebar');
-      if (sidebar) {
-        sidebarToggle = document.createElement('button');
-        sidebarToggle.id = 'sidebarToggle';
-        sidebarToggle.className = 'sidebar-toggle';
-        sidebarToggle.setAttribute('aria-expanded', 'true');
-        sidebarToggle.setAttribute('aria-label', 'Collapse sidebar');
-        sidebarToggle.textContent = '⇦';
-        sidebar.prepend(sidebarToggle);
-        console.info('Injected missing #sidebarToggle button into sidebar.');
-      } else {
-        console.warn('Sidebar (#sidebar) not found; cannot inject toggle.');
-      }
-    }
-
-    // Clear raster
-    let clearBtn = document.getElementById('clearRasters');
-    if (!clearBtn) {
-      const buttonsBar = document.querySelector('#analysis .buttons');
-      if (buttonsBar) {
-        clearBtn = document.createElement('button');
-        clearBtn.id = 'clearRasters';
-        clearBtn.className = 'clear-raster';
-        clearBtn.textContent = 'Clear raster';
-        buttonsBar.appendChild(clearBtn);
-        console.info('Injected missing #clearRasters button into analysis buttons.');
-      } else {
-        console.warn('Analysis buttons container not found; cannot inject Clear raster.');
-      }
-    }
 
     if (kval && kslider) {
       kval.textContent = kslider.value;
@@ -171,17 +188,16 @@
     let tractsLayer = null, wellsLayer = null, wellsCluster = null;
     let tractsBreaks = null, tractsColors = ramp(5);
 
-    // ---------- raster overlay (single definition) ----------
+    // ---------- raster overlay ----------
     let rasterLayer = null;
     let rasterBounds = null;
 
     function toLeafletBounds(b) {
-      // API returns [sw_lon, sw_lat, ne_lon, ne_lat]
       return L.latLngBounds([ [b[1], b[0]], [b[3], b[2]] ]);
     }
     function ensureRasterOverlay(url, boundsArray) {
       if (!url || !Array.isArray(boundsArray) || boundsArray.length !== 4) return null;
-      const finalUrl = url + (url.includes('?') ? '&' : '?') + 'v=' + Date.now(); // cache-bust
+      const finalUrl = url + (url.includes('?') ? '&' : '?') + 'v=' + Date.now();
       rasterBounds = toLeafletBounds(boundsArray);
       try { if (rasterLayer) map.removeLayer(rasterLayer); } catch {}
       const op = parseFloat(rasterOpacity?.value ?? 0.6);
@@ -211,20 +227,20 @@
       pane.style.zIndex = (rasterOnTop && rasterOnTop.checked) ? 430 : 380;
     }
 
-    // fit map to data bounds
+    // fit map to bounds
     try {
       const b = await fetch('/outputs/bounds.json').then(r => r.json());
       if (Array.isArray(b) && b.length === 4) map.fitBounds(toLeafletBounds(b), { padding: [20, 20] });
     } catch {}
 
-    // ---------- tracts loader + legend ----------
+    // ---------- tracts loader + legend (Jenks 5) ----------
     async function loadTracts() {
       const gj = await fetch('/outputs/tracts_base.geojson').then(r => r.json());
       const vals = gj.features.map(f => Number(f.properties?.canrate)).filter(Number.isFinite);
       if (!vals.length) return;
-      const min = Math.min(...vals), max = Math.max(...vals);
       const classCount = 5;
-      tractsBreaks = (methodSel && methodSel.value === 'equal') ? equalBreaks(min, max, classCount) : quantiles(vals, classCount);
+
+      tractsBreaks = jenksThresholds(vals, classCount); // <- Jenks thresholds (length 4)
       tractsColors = ramp(classCount);
 
       if (tractsLayer) tractsLayer.remove();
@@ -253,6 +269,7 @@
         legendEl.innerHTML = '<b>Cancer Incidence Rate</b><br/>No data';
         return;
       }
+      // If values look like proportions, scale to per 100,000
       const maxVal = Math.max(...values);
       const isProportion = maxVal <= 1;
       const scale = isProportion ? 100000 : 1;
@@ -264,7 +281,7 @@
       };
 
       const items = [];
-      items.push(`<div><b>Cancer Incidence Rate</b> ${unitLabel}</div>`);
+      items.push(`<div><b>Cancer Incidence Rate</b> ${unitLabel} — Jenks (5)</div>`);
       for (let i = 0; i <= breaks.length; i++) {
         let label;
         if (i === 0) label = `< ${fmtLegend(breaks[0])}`;
@@ -310,7 +327,7 @@
       if (wellsLayer) wellsLayer.remove();
       if (wellsCluster) wellsCluster.remove();
 
-      const size = parseInt(pointSize?.value ?? '5', 10);
+      const size = parseInt(pointSize?.value ?? '4', 10); // default smaller
       const makeMarker = (f, latlng) => {
         const v = Number(f.properties?.nitr_ran);
         const color = getWellColor(v);
@@ -394,11 +411,7 @@
         });
         t.done();
 
-        if (!res.ok) {
-          const txt = await res.text().catch(()=> '');
-          console.error('API /api/run error', res.status, txt);
-          throw new Error(`API /api/run ${res.status}`);
-        }
+        if (!res.ok) throw new Error(`API /api/run ${res.status}`);
         const data = await res.json();
         handleRunResult(data, k);
         setStatus('Done.');
@@ -411,7 +424,6 @@
     }
 
     function renderSensitivityTable(rows) {
-      // If the structured table exists, use it; else fall back to the legacy text div.
       if (!(sensTable && sensTbody && sensEmpty)) {
         if (sensTextDiv) {
           if (!rows || !rows.length) { sensTextDiv.textContent = 'No sensitivity results.'; return; }
@@ -426,31 +438,23 @@
         }
         return;
       }
-
       sensTbody.innerHTML = '';
-      if (!rows || !rows.length) {
-        sensTable.style.display = 'none';
-        sensEmpty.style.display = 'block';
-        return;
-      }
-
+      if (!rows || !rows.length) { sensTable.style.display = 'none'; sensEmpty.style.display = 'block'; return; }
       const td = (v) => `<td>${v}</td>`;
       rows.forEach(r => {
-        const pVal   = (r.p !== undefined && r.p !== null) ? r.p
-                     : (r.p_value !== undefined && r.p_value !== null) ? safeExp(r.p_value)
-                     : '—';
-        const ciLo   = (r.ci_lo !== undefined) ? r.ci_lo : r.ci_low;
-        const ciHi   = (r.ci_hi !== undefined) ? r.ci_hi : r.ci_high;
-
+        const pVal = (r.p !== undefined && r.p !== null) ? r.p
+                  : (r.p_value !== undefined && r.p_value !== null) ? safeExp(r.p_value) : '—';
+        const ciLo = (r.ci_lo !== undefined) ? r.ci_lo : r.ci_low;
+        const ciHi = (r.ci_hi !== undefined) ? r.ci_hi : r.ci_high;
         const tr = document.createElement('tr');
         tr.innerHTML = [
           td(r.k ?? '—'),
           td(r.n ?? '—'),
-          td(Number.isFinite(+r.r2)   ? (+r.r2).toFixed(3)   : '—'),
-          td(Number.isFinite(+r.slope)? (+r.slope).toFixed(3): '—'),
+          td(Number.isFinite(+r.r2)    ? (+r.r2).toFixed(3)    : '—'),
+          td(Number.isFinite(+r.slope) ? (+r.slope).toFixed(3) : '—'),
           td(pVal),
-          td(Number.isFinite(+ciLo)   ? (+ciLo).toFixed(3)   : '—'),
-          td(Number.isFinite(+ciHi)   ? (+ciHi).toFixed(3)   : '—')
+          td(Number.isFinite(+ciLo)    ? (+ciLo).toFixed(3)    : '—'),
+          td(Number.isFinite(+ciHi)    ? (+ciHi).toFixed(3)    : '—')
         ].join('');
         sensTbody.appendChild(tr);
       });
@@ -458,21 +462,12 @@
       sensTable.style.display = 'table';
     }
 
-    // Parse text blobs like "k=1.6 n=1308 R^2=0.018 slope=0.006 p=1.2e-6 CI=[0.003, 0.008]"
     function parseSensitivityText(textBlob) {
       const rows = [];
       const re = /k\s*=\s*([\d.]+).*?n\s*=\s*(\d+).*?R\^?2\s*=\s*([\d.]+).*?slope\s*=\s*([-\d.]+).*?p\s*=\s*([0-9eE+.\-]+).*?CI\s*=\s*\[\s*([-\d.]+)\s*,\s*([-\d.]+)\s*\]/g;
       let m;
       while ((m = re.exec(textBlob)) !== null) {
-        rows.push({
-          k: Number(m[1]),
-          n: Number(m[2]),
-          r2: Number(m[3]),
-          slope: Number(m[4]),
-          p: m[5],
-          ci_lo: Number(m[6]),
-          ci_hi: Number(m[7])
-        });
+        rows.push({ k: +m[1], n: +m[2], r2: +m[3], slope: +m[4], p: m[5], ci_lo: +m[6], ci_hi: +m[7] });
       }
       return rows;
     }
@@ -495,24 +490,14 @@
         });
         t.done();
 
-        if (!res.ok) {
-          const txt = await res.text().catch(()=> '');
-          console.error('API /api/sensitivity error', res.status, txt);
-          throw new Error(`API /api/sensitivity ${res.status}`);
-        }
+        if (!res.ok) throw new Error(`API /api/sensitivity ${res.status}`);
         const data = await res.json();
 
         let rows = Array.isArray(data.rows) ? data.rows : null;
-        if (!rows) {
-          const raw = data.text || data.summary || '';
-          rows = parseSensitivityText(raw);
-        }
+        if (!rows) rows = parseSensitivityText(data.text || data.summary || '');
         renderSensitivityTable(rows);
 
-        if (dlSens && data.csv) {
-          dlSens.href = data.csv;
-          dlSens.textContent = 'Download Sensitivity CSV';
-        }
+        if (dlSens && data.csv) { dlSens.href = data.csv; dlSens.textContent = 'Download Sensitivity CSV'; }
         setStatus('Done.');
       } catch (err) {
         console.error(err);
@@ -523,7 +508,7 @@
     }
 
     // ---------- event wiring ----------
-    if (rasterToggle) rasterToggle.checked = true; // default ON so new rasters auto-show
+    if (rasterToggle) rasterToggle.checked = true;
     if (rasterOpacity) rasterOpacity.addEventListener('input', () => setRasterOpacity(rasterOpacity.value));
     if (rasterToggle)  rasterToggle.addEventListener('change', () => setRasterVisible(rasterToggle.checked));
     if (rasterOnTop)   rasterOnTop.addEventListener('change', applyRasterOrder);
@@ -545,7 +530,6 @@
       applyRasterOrder();
     });
 
-    if (methodSel)     methodSel.addEventListener('change', loadTracts);
     if (tractsOpacity) tractsOpacity.addEventListener('input', debounce(loadTracts, 250));
     if (pointSize)     pointSize.addEventListener('input', debounce(loadWells, 250));
     if (clusterToggle) clusterToggle.addEventListener('change', loadWells);
@@ -567,17 +551,21 @@
     if (runBtn)  runBtn.addEventListener('click', runIDW);
     if (sensBtn) sensBtn.addEventListener('click', runSensitivity);
 
-    // Sidebar collapse/expand with localStorage persistence
+    // Sidebar collapse/expand with persistence (and Alt+S shortcut)
+    let sidebarToggle = document.getElementById('sidebarToggle');
+    if (!sidebarToggle) {
+      const sidebar = document.getElementById('sidebar');
+      if (sidebar) {
+        sidebarToggle = document.createElement('button');
+        sidebarToggle.id = 'sidebarToggle';
+        sidebarToggle.className = 'sidebar-toggle';
+        sidebarToggle.setAttribute('aria-expanded', 'true');
+        sidebarToggle.setAttribute('aria-label', 'Collapse sidebar');
+        sidebarToggle.textContent = '⇦';
+        sidebar.prepend(sidebarToggle);
+      }
+    }
     if (sidebarToggle) {
-      // a11y attributes
-      sidebarToggle.setAttribute('role', 'button');
-      sidebarToggle.setAttribute('tabindex', '0');
-
-      const collapsed = localStorage.getItem('sidebarCollapsed') === '1';
-      document.body.classList.toggle('sidebar-collapsed', collapsed);
-      sidebarToggle.setAttribute('aria-expanded', (!collapsed).toString());
-      setTimeout(() => map.invalidateSize(), 220);
-
       const toggleSidebar = () => {
         const now = !document.body.classList.contains('sidebar-collapsed');
         document.body.classList.toggle('sidebar-collapsed', now);
@@ -585,25 +573,34 @@
         sidebarToggle.setAttribute('aria-expanded', (!now).toString());
         setTimeout(() => map.invalidateSize(), 220);
       };
+      const collapsed = localStorage.getItem('sidebarCollapsed') === '1';
+      document.body.classList.toggle('sidebar-collapsed', collapsed);
+      sidebarToggle.setAttribute('aria-expanded', (!collapsed).toString());
+      setTimeout(() => map.invalidateSize(), 220);
       sidebarToggle.addEventListener('click', toggleSidebar);
       sidebarToggle.addEventListener('keydown', (e) => {
         if (e.key === ' ' || e.key === 'Enter') { e.preventDefault(); toggleSidebar(); }
-        document.addEventListener('keydown', (e) => {
-          if (e.altKey && (e.key === 's' || e.key === 'S')) {
-            e.preventDefault();
-            toggleSidebar();
-          }
-        });
+      });
+      document.addEventListener('keydown', (e) => {
+        if (e.altKey && (e.key === 's' || e.key === 'S')) { e.preventDefault(); toggleSidebar(); }
       });
     }
 
-    // Clear raster button
+    // Clear raster
+    let clearBtn = document.getElementById('clearRasters');
+    if (!clearBtn) {
+      const buttonsBar = document.querySelector('#analysis .buttons');
+      if (buttonsBar) {
+        clearBtn = document.createElement('button');
+        clearBtn.id = 'clearRasters';
+        clearBtn.className = 'clear-raster';
+        clearBtn.textContent = 'Clear raster';
+        buttonsBar.appendChild(clearBtn);
+      }
+    }
     if (clearBtn) {
       clearBtn.addEventListener('click', () => {
-        if (rasterLayer) {
-          map.removeLayer(rasterLayer);
-          rasterLayer = null;
-        }
+        if (rasterLayer) { map.removeLayer(rasterLayer); rasterLayer = null; }
       });
     }
 

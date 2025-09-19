@@ -291,3 +291,89 @@ body.sidebar-collapsed .sidebar-toggle {
   /* flip arrow */
   box-shadow: 0 2px 10px rgba(0, 0, 0, .35);
 }
+
+/* OLS panel */
+#olsPanel {
+  margin-top: .35rem;
+}
+
+#olsPanel .note {
+  color: var(--muted);
+  font-size: .9rem;
+  margin-top: .25rem;
+}
+
+/* Compact definition list under the table */
+.defs {
+  margin: .35rem 0 0;
+  color: var(--muted);
+  font-size: .9rem;
+}
+
+.defs dt {
+  font-weight: 600;
+  display: inline;
+}
+
+.defs dd {
+  display: inline;
+  margin: 0 .75rem 0 .25rem;
+}
+
+/* Floating Info Panel (on-map) */
+.map-toggle {
+  background: #1e2633;
+  border: 1px solid var(--border);
+  color: var(--fg);
+  padding: 6px 10px;
+  border-radius: 8px;
+  cursor: pointer;
+  box-shadow: 0 2px 10px rgba(0, 0, 0, .35);
+  font-weight: 600;
+}
+
+.leaflet-control.map-info-control {
+  background: transparent;
+}
+
+.map-panel {
+  position: absolute;
+  top: 56px;
+  /* below the top bar */
+  right: 10px;
+  width: 300px;
+  max-height: calc(100% - 72px);
+  overflow: auto;
+  background: var(--panel);
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  box-shadow: 0 6px 24px rgba(0, 0, 0, .35);
+  padding: 10px 12px;
+  display: none;
+  /* toggled by JS */
+  z-index: 1000;
+}
+
+.map-panel.open {
+  display: block;
+}
+
+.map-panel h4 {
+  margin: 4px 0 8px;
+  font-size: 13px;
+  color: var(--muted);
+  text-transform: uppercase;
+  letter-spacing: .6px;
+}
+
+.map-panel .section {
+  margin: 8px 0 10px;
+  padding-bottom: 8px;
+  border-bottom: 1px dashed var(--border);
+}
+
+.map-panel details summary {
+  cursor: pointer;
+  color: var(--muted);
+  margin: 2px 0 6px;
+}
