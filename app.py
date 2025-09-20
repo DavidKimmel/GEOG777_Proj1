@@ -179,9 +179,21 @@ def api_sensitivity():
         out_csv = OUTPUTS / f"sensitivity_neighbors{neighbors}_cell{cell_size}.csv"
         import csv
         with open(out_csv, "w", newline="", encoding="utf-8") as f:
-            w = csv.DictWriter(f, fieldnames=["k","r2","slope","intercept","p_value","ci_low","ci_high","n"])
-            w.writeheader()
-            w.writerows(rows)
+            import csv
+            writer = csv.writer(f)
+            # Human-friendly header row
+            writer.writerow(["Power k","R^2","Slope (rate/mg·L)","Intercept","p-value","CI low","CI high","Tracts n"])
+            for r in rows:
+                writer.writerow([
+                    r.get("k"),
+                    r.get("r2"),
+                    r.get("slope"),
+                    r.get("intercept"),
+                    r.get("p_value"),
+                    r.get("ci_low"),
+                    r.get("ci_high"),
+                    r.get("n"),
+                ])
 
         return jsonify({"rows": rows, "csv": f"/outputs/{out_csv.name}"})
 

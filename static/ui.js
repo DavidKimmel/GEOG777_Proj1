@@ -1,6 +1,7 @@
 // ui.js — GEOG 577 Project 1 (Flask + Leaflet)
 // IDW → zonal → OLS with raster overlay
-// Now using Jenks (natural breaks) with 5 classes for the cancer choropleth.
+// Jenks(5) choropleth, raster z-order toggle, sensitivity table,
+// sidebar collapse, zoom on right, on-map hamburger panel with Legend + OLS summary.
 
 (function () {
   // ---------- small helpers ----------
@@ -55,22 +56,19 @@
     return '#d7191c';
   }
 
-  // ---------- classification helpers ----------
+  // ---------- classification ----------
   function classify(value, breaks) {
     let i = 0;
     for (; i < breaks.length; i++) { if (value <= breaks[i]) return i; }
     return breaks.length;
   }
-
-  // Jenks (natural breaks) using dynamic programming.
-  // Returns thresholds array of length (k-1), e.g., for k=5 ⇒ 4 thresholds.
+  // Jenks (natural breaks) thresholds array length k-1
   function jenksThresholds(values, k) {
     const data = values.filter(Number.isFinite).slice().sort((a,b)=>a-b);
     const n = data.length;
-    if (n === 0 || k < 2) return [];
+    if (!n || k < 2) return [];
     if (k > n) k = n;
 
-    // matrices
     const mat1 = Array.from({length: n+1}, () => Array(k+1).fill(0));
     const mat2 = Array.from({length: n+1}, () => Array(k+1).fill(0));
 
@@ -78,57 +76,47 @@
       mat1[0][i] = 1; mat2[0][i] = 0;
       for (let j=1; j<=n; j++) mat2[j][i] = Infinity;
     }
-    for (let j=1; j<=n; j++) {
-      mat1[j][1] = 1; mat2[j][1] = 0;
-    }
+    for (let j=1; j<=n; j++) { mat1[j][1] = 1; mat2[j][1] = 0; }
 
-    // DP
     for (let l=2; l<=n; l++) {
       let s1=0, s2=0, w=0;
       for (let m=1; m<=l; m++) {
         const i3 = l - m + 1;
         const val = data[i3-1];
-        s1 += val;
-        s2 += val*val;
-        w += 1;
-        const v = s2 - (s1*s1)/w; // variance
+        s1 += val; s2 += val*val; w += 1;
+        const v = s2 - (s1*s1)/w;
         if (i3 !== 1) {
           for (let j=2; j<=k; j++) {
             if (mat2[l][j] >= (v + mat2[i3-1][j-1])) {
-              mat1[l][j] = i3;
-              mat2[l][j] = v + mat2[i3-1][j-1];
+              mat1[l][j] = i3; mat2[l][j] = v + mat2[i3-1][j-1];
             }
           }
         }
       }
-      mat1[l][1] = 1;
-      mat2[l][1] = s2 - (s1*s1)/w;
+      mat1[l][1] = 1; mat2[l][1] = s2 - (s1*s1)/w;
     }
 
-    // backtrack to get class breaks (full list includes min/max)
     const breaks = Array(k+1).fill(0);
-    breaks[k] = data[n-1];
-    breaks[0] = data[0];
-
-    let countNum = k;
-    let kclass = n;
+    breaks[k] = data[n-1]; breaks[0] = data[0];
+    let countNum = k, kclass = n;
     while (countNum > 1) {
-      const id = mat1[kclass][countNum] - 2; // index for break
-      breaks[countNum - 1] = data[id];
+      const id = mat1[kclass][countNum] - 2;
+      breaks[countNum-1] = data[id];
       kclass = mat1[kclass][countNum] - 1;
       countNum--;
     }
-
-    // convert to threshold list (exclude min, include internal breaks, exclude max)
     const uniq = [];
     for (let i=1; i<breaks.length-1; i++) {
-      const b = breaks[i];
-      if (!uniq.length || b !== uniq[uniq.length-1]) uniq.push(b);
+      const b = breaks[i]; if (!uniq.length || b !== uniq[uniq.length-1]) uniq.push(b);
     }
-    // ensure we have exactly k-1 thresholds (pad or slice if needed)
     while (uniq.length > k-1) uniq.pop();
-    while (uniq.length < k-1) uniq.push(breaks[breaks.length-2]); // duplicate last internal break
+    while (uniq.length < k-1) uniq.push(breaks[breaks.length-2]);
     return uniq;
+  }
+
+  // helper to write the same HTML into multiple containers
+  function setHTML(idList, html) {
+    idList.forEach(id => { const el = document.getElementById(id); if (el) el.innerHTML = html; });
   }
 
   // ---------- page setup ----------
@@ -143,12 +131,11 @@
       dark:  L.tileLayer('https://{s}.basemaps.cartocdn.com/dark_all/{z}/{x}/{y}{r}.png',   { attribution: '© OpenStreetMap, © CARTO' })
     };
     base.osm.addTo(map);
-    // Right-side zoom control (so it doesn't fight the sidebar handle)
     L.control.zoom({ position: 'topright' }).addTo(map);
 
-    // Create a dedicated pane for the IDW raster
+    // dedicated pane for IDW raster
     map.createPane('idwPane');
-    map.getPane('idwPane').style.zIndex = 380; // below vectors (~400) by default
+    map.getPane('idwPane').style.zIndex = 380; // below vectors by default
 
     // controls/inputs
     const themeToggle   = document.getElementById('themeToggle');
@@ -158,7 +145,7 @@
     const tractsOpacity = document.getElementById('tractsOpacity');
     const pointSize     = document.getElementById('pointSize');
     const clusterToggle = document.getElementById('clusterToggle');
-    if (clusterToggle) clusterToggle.checked = false; // default clustering OFF
+    if (clusterToggle) clusterToggle.checked = false; // default OFF
     const rasterOpacity = document.getElementById('rasterOpacity');
     const rasterOnTop   = document.getElementById('rasterOnTop');
 
@@ -173,7 +160,7 @@
     const dlSens     = document.getElementById('dlSens');
     const statsEl    = document.getElementById('stats');
 
-    // Sensitivity table targets (optional)
+    // sensitivity table targets (if present)
     const sensTable  = document.getElementById('sensTable');
     const sensTbody  = sensTable ? sensTable.querySelector('tbody') : null;
     const sensEmpty  = document.getElementById('sensEmpty');
@@ -188,24 +175,58 @@
     let tractsLayer = null, wellsLayer = null, wellsCluster = null;
     let tractsBreaks = null, tractsColors = ramp(5);
 
+    // ---------- on-map info panel + hamburger (mounted inside the map) ----------
+    const infoPanel = document.createElement('div');
+    infoPanel.className = 'map-panel';
+    infoPanel.innerHTML = `
+      <div class="section">
+        <h4>Legend</h4>
+        <div id="map-legend-tracts"></div>
+        <div id="map-legend-wells" style="margin-top:8px;"></div>
+      </div>
+      <div class="section">
+        <h4>Analysis summary</h4>
+        <div id="map-ols"></div>
+        <details>
+          <summary>What do these mean?</summary>
+          <div style="font-size:.9rem; color: var(--muted); line-height:1.35;">
+            <b>k</b> IDW power • <b>n</b> tracts • <b>R²</b> variance explained •
+            <b>Slope</b> Δ cancer rate per 1 mg/L nitrate •
+            <b>p</b> significance • <b>CI</b> 95% confidence interval for the slope.
+          </div>
+        </details>
+      </div>`;
+    const mapContainer = map.getContainer();
+    if (getComputedStyle(mapContainer).position === 'static') {
+      mapContainer.style.position = 'relative';
+    }
+    mapContainer.appendChild(infoPanel);
+
+    const InfoControl = L.Control.extend({
+      onAdd: function() {
+        const btn = L.DomUtil.create('button', 'map-toggle');
+        btn.type = 'button'; btn.title = 'Map info'; btn.innerHTML = '☰';
+        L.DomEvent.on(btn, 'click', (e) => { L.DomEvent.stopPropagation(e); infoPanel.classList.toggle('open'); setTimeout(()=>map.invalidateSize(),200); });
+        return btn;
+      }, onRemove: function() {}
+    });
+    map.addControl(new InfoControl({ position: 'topleft' }));
+    L.DomEvent.disableClickPropagation(infoPanel);
+    L.DomEvent.on(infoPanel, 'mousewheel', L.DomEvent.stopPropagation);
+    map.on('click', () => infoPanel.classList.remove('open'));
+
     // ---------- raster overlay ----------
     let rasterLayer = null;
     let rasterBounds = null;
 
-    function toLeafletBounds(b) {
-      return L.latLngBounds([ [b[1], b[0]], [b[3], b[2]] ]);
-    }
+    function toLeafletBounds(b) { return L.latLngBounds([ [b[1], b[0]], [b[3], b[2]] ]); }
     function ensureRasterOverlay(url, boundsArray) {
       if (!url || !Array.isArray(boundsArray) || boundsArray.length !== 4) return null;
       const finalUrl = url + (url.includes('?') ? '&' : '?') + 'v=' + Date.now();
       rasterBounds = toLeafletBounds(boundsArray);
       try { if (rasterLayer) map.removeLayer(rasterLayer); } catch {}
       const op = parseFloat(rasterOpacity?.value ?? 0.6);
-      rasterLayer = L.imageOverlay(finalUrl, rasterBounds, {
-        opacity: Number.isFinite(op) ? op : 0.6,
-        interactive: false,
-        pane: 'idwPane'
-      });
+      rasterLayer = L.imageOverlay(finalUrl, rasterBounds, { opacity: Number.isFinite(op) ? op : 0.6, interactive: false, pane: 'idwPane' });
       return rasterLayer;
     }
     function setRasterVisible(flag) {
@@ -215,19 +236,14 @@
       if (rasterToggle) rasterToggle.checked = !!flag;
       applyRasterOrder();
     }
-    function setRasterOpacity(value) {
-      if (!rasterLayer) return;
-      const op = Math.max(0, Math.min(1, Number(value)));
-      rasterLayer.setOpacity(op);
-    }
+    function setRasterOpacity(value) { if (rasterLayer) rasterLayer.setOpacity(Math.max(0, Math.min(1, Number(value)))); }
     function applyRasterOrder() {
       if (!rasterLayer) return;
-      const pane = map.getPane('idwPane');
-      if (!pane) return;
+      const pane = map.getPane('idwPane'); if (!pane) return;
       pane.style.zIndex = (rasterOnTop && rasterOnTop.checked) ? 430 : 380;
     }
 
-    // fit map to bounds
+    // fit to bounds if present
     try {
       const b = await fetch('/outputs/bounds.json').then(r => r.json());
       if (Array.isArray(b) && b.length === 4) map.fitBounds(toLeafletBounds(b), { padding: [20, 20] });
@@ -239,8 +255,7 @@
       const vals = gj.features.map(f => Number(f.properties?.canrate)).filter(Number.isFinite);
       if (!vals.length) return;
       const classCount = 5;
-
-      tractsBreaks = jenksThresholds(vals, classCount); // <- Jenks thresholds (length 4)
+      tractsBreaks = jenksThresholds(vals, classCount);
       tractsColors = ramp(classCount);
 
       if (tractsLayer) tractsLayer.remove();
@@ -253,8 +268,6 @@
         onEachFeature: (feature, layer) => {
           const v = Number(feature.properties?.canrate);
           layer.bindPopup(`<b>Tract</b> ${feature.properties?.GEOID10 ?? ''}<br/>Cancer rate: ${fmt(v)}`);
-          layer.on('mouseover', () => layer.setStyle({ weight: 2 }));
-          layer.on('mouseout',  () => layer.setStyle({ weight: 0.5 }));
         }
       });
       if (!tractsToggle || tractsToggle.checked) tractsLayer.addTo(map);
@@ -263,13 +276,10 @@
     }
 
     function renderCancerLegend(values, breaks, colors) {
-      const legendEl = document.getElementById('legend');
-      if (!legendEl) return;
       if (!Array.isArray(breaks) || !breaks.length) {
-        legendEl.innerHTML = '<b>Cancer Incidence Rate</b><br/>No data';
+        setHTML(['map-legend-tracts'], '<b>Cancer Incidence Rate</b><br/>No data');
         return;
       }
-      // If values look like proportions, scale to per 100,000
       const maxVal = Math.max(...values);
       const isProportion = maxVal <= 1;
       const scale = isProportion ? 100000 : 1;
@@ -288,19 +298,12 @@
         else if (i === breaks.length) label = `> ${fmtLegend(breaks[i - 1])}`;
         else label = `${fmtLegend(breaks[i - 1])} – ${fmtLegend(breaks[i])}`;
         const swatch = colors[i] ?? colors[colors.length - 1];
-        items.push(
-          `<div class="legend-row">
-             <span class="legend-swatch" style="background:${swatch}"></span>
-             ${label}
-           </div>`
-        );
+        items.push(`<div class="legend-row"><span class="legend-swatch" style="background:${swatch}"></span>${label}</div>`);
       }
-      legendEl.innerHTML = items.join('');
+      setHTML(['map-legend-tracts'], items.join(''));
     }
 
     function renderWellLegend() {
-      const box = document.getElementById('legend-wells');
-      if (!box) return;
       const bins = [
         { label: '< 1 mg/L',    color: getWellColor(0.5) },
         { label: '1 – 3 mg/L',  color: getWellColor(2) },
@@ -309,16 +312,14 @@
         { label: '≥ 10 mg/L',   color: getWellColor(12) }
       ];
       const rows = bins.map(b =>
-        `<div class="legend-row">
-           <span class="legend-swatch" style="background:${b.color}"></span>
-           ${b.label}
-         </div>`
+        `<div class="legend-row"><span class="legend-swatch" style="background:${b.color}"></span>${b.label}</div>`
       ).join('');
       const clusterEl = document.getElementById('clusterToggle');
       const note = (clusterEl && clusterEl.checked)
         ? `<div class="legend-note" style="margin-top:4px; color:#9aa0a6;">Note: clustering groups points visually; colors still represent individual well values.</div>`
         : '';
-      box.innerHTML = `<div><b>Well Nitrate</b><br/>(mg/L)</div>${rows}${note}`;
+      const html = `<div><b>Well Nitrate</b><br/>(mg/L)</div>${rows}${note}`;
+      setHTML(['map-legend-wells'], html);
     }
 
     // ---------- wells loader ----------
@@ -327,16 +328,12 @@
       if (wellsLayer) wellsLayer.remove();
       if (wellsCluster) wellsCluster.remove();
 
-      const size = parseInt(pointSize?.value ?? '4', 10); // default smaller
+      const size = parseInt(pointSize?.value ?? '4', 10); // smaller default
       const makeMarker = (f, latlng) => {
         const v = Number(f.properties?.nitr_ran);
         const color = getWellColor(v);
         return L.circleMarker(latlng, {
-          radius: size,
-          weight: 0.5,
-          color: '#000',
-          fillColor: color,
-          fillOpacity: 0.9
+          radius: size, weight: 0.5, color: '#000', fillColor: color, fillOpacity: 0.9
         }).bindPopup(`<b>Well</b><br/>Nitrate: ${fmt(v)} mg/L`);
       };
 
@@ -372,7 +369,7 @@
           }
         }
 
-        // OLS + downloads
+        // OLS + downloads (sidebar text)
         if (data?.ols && statsEl) {
           const s = data.ols;
           const p = (typeof s.p_value === 'number') ? s.p_value.toExponential(1) : '—';
@@ -380,16 +377,28 @@
           if (s.rate_units === 'proportion') {
             slopeTxt += ` (~${fmt((s.slope || 0) * (s.rate_scale || 100000))} per 100,000 per mg/L)`;
           }
-          const ciTxt = Array.isArray(s.ci) ? `[${fmt(s.ci[0])}, ${fmt(s.ci[1])}]` : '—';
-          statsEl.innerHTML =
-            `<div><b>OLS:</b> n=${s.n ?? '—'}, R²=${fmt(s.r2)}, ${slopeTxt}, p=${p}, CI=${ciTxt}</div>`;
+          const ciTxt = Array.isArray(s.ci) ? `[${fmt(s.ci[0])}, ${fmt(s.ci[1])}]`
+                                            : `[${fmt(s.ci_low ?? s.ci_lo)}, ${fmt(s.ci_high ?? s.ci_hi)}]`;
+          statsEl.innerHTML = `<div><b>OLS:</b> n=${s.n ?? '—'}, R²=${fmt(s.r2)}, ${slopeTxt}, p=${p}, CI=${ciTxt}</div>`;
+
+          // mirror compact summary into on-map panel
+          const mapOls = document.getElementById('map-ols');
+          if (mapOls) {
+            const ciShort = Array.isArray(s.ci)
+              ? `[${fmt(s.ci[0])}, ${fmt(s.ci[1])}]`
+              : `[${fmt(s.ci_low ?? s.ci_lo)}, ${fmt(s.ci_high ?? s.ci_hi)}]`;
+            let slopeShort = `${fmt(s.slope)}`;
+            if (s.rate_units === 'proportion') {
+              const per100k = Number.isFinite(s.slope) ? s.slope * (s.rate_scale || 100000) : null;
+              if (per100k !== null) slopeShort += ` (~${fmt(per100k)} per 100,000/mg·L)`;
+            }
+            mapOls.innerHTML = `k=${fmt(s.k ?? k)} • n=${s.n ?? '—'} • R²=${fmt(s.r2)} • slope=${slopeShort} • p=${p} • CI=${ciShort}`;
+          }
         }
         if (data?.csv && dlCSV) { dlCSV.href = data.csv; dlCSV.textContent = 'Download CSV'; }
         if (data?.png && dlPNG) { dlPNG.href = data.png; dlPNG.textContent = `Raster k=${k}`; }
 
-      } catch (err) {
-        console.error('handleRunResult runtime error', err, data);
-      }
+      } catch (err) { console.error('handleRunResult runtime error', err, data); }
     }
 
     // ---------- actions ----------
@@ -416,11 +425,8 @@
         handleRunResult(data, k);
         setStatus('Done.');
       } catch (err) {
-        console.error(err);
-        setStatus('Error.');
-      } finally {
-        setBusy(false);
-      }
+        console.error(err); setStatus('Error.');
+      } finally { setBusy(false); }
     }
 
     function renderSensitivityTable(rows) {
@@ -499,12 +505,8 @@
 
         if (dlSens && data.csv) { dlSens.href = data.csv; dlSens.textContent = 'Download Sensitivity CSV'; }
         setStatus('Done.');
-      } catch (err) {
-        console.error(err);
-        setStatus('Error.');
-      } finally {
-        setBusy(false);
-      }
+      } catch (err) { console.error(err); setStatus('Error.'); }
+      finally { setBusy(false); }
     }
 
     // ---------- event wiring ----------
@@ -578,15 +580,11 @@
       sidebarToggle.setAttribute('aria-expanded', (!collapsed).toString());
       setTimeout(() => map.invalidateSize(), 220);
       sidebarToggle.addEventListener('click', toggleSidebar);
-      sidebarToggle.addEventListener('keydown', (e) => {
-        if (e.key === ' ' || e.key === 'Enter') { e.preventDefault(); toggleSidebar(); }
-      });
-      document.addEventListener('keydown', (e) => {
-        if (e.altKey && (e.key === 's' || e.key === 'S')) { e.preventDefault(); toggleSidebar(); }
-      });
+      sidebarToggle.addEventListener('keydown', (e) => { if (e.key === ' ' || e.key === 'Enter') { e.preventDefault(); toggleSidebar(); } });
+      document.addEventListener('keydown', (e) => { if (e.altKey && (e.key === 's' || e.key === 'S')) { e.preventDefault(); toggleSidebar(); } });
     }
 
-    // Clear raster
+    // Clear raster (ensure button exists)
     let clearBtn = document.getElementById('clearRasters');
     if (!clearBtn) {
       const buttonsBar = document.querySelector('#analysis .buttons');
@@ -598,11 +596,7 @@
         buttonsBar.appendChild(clearBtn);
       }
     }
-    if (clearBtn) {
-      clearBtn.addEventListener('click', () => {
-        if (rasterLayer) { map.removeLayer(rasterLayer); rasterLayer = null; }
-      });
-    }
+    if (clearBtn) clearBtn.addEventListener('click', () => { if (rasterLayer) { map.removeLayer(rasterLayer); rasterLayer = null; } });
 
     // initial loads
     await loadTracts();
@@ -610,5 +604,22 @@
     renderWellLegend();
 
     setStatus('Ready.');
+    // About modal wiring
+    (function(){
+      const aboutBtn = document.getElementById('aboutBtn');
+      const modal = document.getElementById('aboutModal');
+      const close = document.getElementById('aboutClose');
+      if (aboutBtn && modal) {
+        aboutBtn.addEventListener('click', (e)=>{ e.preventDefault(); modal.setAttribute('aria-hidden','false'); });
+      }
+      if (close && modal) {
+        close.addEventListener('click', ()=> modal.setAttribute('aria-hidden','true'));
+      }
+      if (modal) {
+        modal.addEventListener('click', (e)=>{ if (e.target === modal) modal.setAttribute('aria-hidden','true'); });
+        document.addEventListener('keydown', (e)=>{ if (e.key === 'Escape') modal.setAttribute('aria-hidden','true'); });
+      }
+    })();
+
   });
 })();

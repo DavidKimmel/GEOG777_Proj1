@@ -15,15 +15,15 @@
   <header class="topbar">
     <div class="brand">Nitrate ↔ Cancer Explorer</div>
     <div class="top-actions">
-      <label class="toggle">
-        <input id="themeToggle" type="checkbox" /> <span>Dark mode</span>
-      </label>
+      <div id="spinner" class="spinner" aria-hidden="true" title="Working"></div>
+      
     </div>
   </header>
 
   <aside id="sidebar">
     <!-- Sidebar collapse handle -->
-    <button id="sidebarToggle" class="sidebar-toggle" aria-expanded="true" aria-label="Collapse sidebar">⇦</button>
+    <div class="sidebar-head"><button id="sidebarToggle" class="sidebar-toggle" aria-expanded="true" aria-label="Collapse sidebar">⇦</button>
+      <button id="aboutBtn" class="btn btn-ghost about-inline" title="About this Explorer">About</button></div>
 
     <div class="section">
       <h3>Basemap</h3>
@@ -101,10 +101,7 @@
       </div>
     </div>
 
-    <div class="section">
-      <h3>Legend</h3>
-      <div id="legend"></div>
-      <div id="legend-wells" style="margin-top:10px;"></div>
+    <div class="section">Created by David A. Kimmel. <br> GEOG 777, Fall 2025
     </div>
   </aside>
 
@@ -117,6 +114,29 @@
   <script src="https://unpkg.com/leaflet/dist/leaflet.js"></script>
   <script src="https://unpkg.com/leaflet.markercluster@1.5.3/dist/leaflet.markercluster.js"></script>
   <script src="/static/ui.js"></script>
+
+  <!-- About Modal -->
+  <div id="aboutModal" class="modal" aria-hidden="true" role="dialog" aria-labelledby="aboutTitle">
+    <div class="modal-dialog">
+      <button class="modal-close" id="aboutClose" aria-label="Close">×</button>
+      <h2 id="aboutTitle">About this Explorer</h2>
+      <div class="modal-body">
+        <h3>Data dictionary</h3>
+        <ul class="dd">
+          <li><b>Tract cancer rate</b> — age-adjusted incidence per 100,000.</li>
+          <li><b>Well nitrate (mg/L)</b> — source measurements aggregated to tracts.</li>
+          <li><b>IDW raster</b> — nitrate surface interpolated from wells.</li>
+          <li><b>Jenks classes</b> — 5-class natural breaks of tract cancer rates.</li>
+          <li><b>OLS summary</b> — regression of cancer rate ~ nitrate (tract mean).</li>
+        </ul>
+        <h3>Why Jenks?</h3>
+        <p>Jenks natural breaks maximize within-class similarity and between-class differences. For skewed rates, it’s often clearer than equal intervals.</p>
+        <h3>Interpretation guidance</h3>
+        <p><b>Small positive slope, low R²</b> → weak linear association: higher nitrate tends to align with higher cancer rates, but the model explains little variance. Treat as a hypothesis generator, not a causal claim.</p>
+      </div>
+    </div>
+  </div>
+
 </body>
 
 </html>
