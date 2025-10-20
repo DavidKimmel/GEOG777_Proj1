@@ -1,0 +1,157 @@
+<!doctype html>
+<html lang="en">
+
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>Nitrate ↔ Cancer Explorer</title>
+  <link rel="stylesheet" href="https://unpkg.com/leaflet/dist/leaflet.css" />
+  <link rel="stylesheet" href="https://unpkg.com/leaflet.markercluster@1.5.3/dist/MarkerCluster.css" />
+  <link rel="stylesheet" href="https://unpkg.com/leaflet.markercluster@1.5.3/dist/MarkerCluster.Default.css" />
+  <link rel="stylesheet" href="style.css" />
+</head>
+
+<body>
+  <header class="topbar">
+    <div class="brand">Nitrate ↔ Cancer Explorer (Static Demo)</div>
+    <div class="top-actions">
+      <!-- Small run-state indicator -->
+      <div id="spinner" class="spinner" aria-hidden="true" title="Working"></div>
+    </div>
+  </header>
+
+  <aside id="sidebar">
+    <!-- Sidebar collapse handle and About -->
+    <div class="sidebar-head">
+      <button id="sidebarToggle" class="sidebar-toggle" aria-expanded="true" aria-label="Collapse sidebar">⇦</button>
+      <button id="aboutBtn" class="btn btn-ghost about-inline" title="About this Explorer"
+        aria-label="Open About">About</button>
+    </div>
+
+    <div class="section">
+      <h3>Basemap</h3>
+      <div class="row">
+        <label><input type="radio" name="basemap" value="osm" checked /> OSM</label>
+        <label><input type="radio" name="basemap" value="light" /> Light</label>
+        <label><input type="radio" name="basemap" value="dark" /> Dark</label>
+      </div>
+    </div>
+
+    <div class="section">
+      <h3>Data layers</h3>
+
+      <label class="row"><input id="toggleTracts" type="checkbox" checked /> Tracts: cancer rate (choropleth)</label>
+      <div class="subrow">
+        <label>Opacity <input id="tractsOpacity" type="range" min="0" max="1" step="0.05" value="0.7" /></label>
+        <span class="muted">Classification: Jenks (natural breaks), 5 classes</span>
+      </div>
+
+      <label class="row"><input id="toggleWells" type="checkbox" checked /> Wells: nitrate (points)</label>
+      <div class="subrow">
+        <label>Size <input id="pointSize" type="range" min="2" max="12" step="1" value="4" /></label>
+        <label><input id="clusterToggle" type="checkbox" /> Cluster points</label>
+      </div>
+
+      <label class="row"><input id="toggleRaster" type="checkbox" /> Raster overlay (IDW)</label>
+      <div class="subrow">
+        <label>Opacity <input id="rasterOpacity" type="range" min="0" max="1" step="0.05" value="0.6" /></label>
+      </div>
+      <div class="subrow">
+        <label><input type="checkbox" id="rasterOnTop" /> Raster above tracts</label>
+      </div>
+    </div>
+
+    <div id="analysis" class="section">
+      <h3>Pre-computed Results</h3>
+      <label class="row" title="Select from pre-computed IDW power values">k (power)
+        <select id="kSelect">
+          <option value="1.0">1.0</option>
+          <option value="1.5">1.5</option>
+          <option value="2.0" selected>2.0</option>
+          <option value="2.5">2.5</option>
+          <option value="3.0">3.0</option>
+          <option value="3.5">3.5</option>
+        </select>
+      </label>
+      <p class="muted" style="font-size: 0.85em; margin-top: 0.5em;">
+        All results pre-computed with neighbors=12, cell=1000m
+      </p>
+      <div class="buttons">
+        <button id="loadData" aria-label="Load selected k-value">Load Data</button>
+        <button id="loadSens" aria-label="Load sensitivity analysis">Load Sensitivity</button>
+        <button id="clearRasters" class="clear-raster" aria-label="Clear raster">Clear raster</button>
+        <a class="btn" id="dlCSV" download aria-label="Download CSV">Download CSV</a>
+        <a class="btn" id="dlPNG" download aria-label="Download PNG">Download PNG</a>
+        <a class="btn" id="dlSens" download aria-label="Download Sensitivity CSV">Download Sensitivity CSV</a>
+      </div>
+      <div id="stats" class="stats"></div>
+      <div id="olsPanel"></div>
+
+      <!-- Sensitivity output area -->
+      <div id="sensPanel">
+        <table id="sensTable" class="mini" aria-label="Sensitivity table">
+          <thead>
+            <tr>
+              <th title="IDW power">k</th>
+              <th title="Number of tracts in regression">n</th>
+              <th title="Coefficient of determination">R²</th>
+              <th title="Change in cancer rate per 1 mg/L nitrate">Slope</th>
+              <th title="p-value of slope">p</th>
+              <th title="Lower 95% CI bound">CI low</th>
+              <th title="Upper 95% CI bound">CI high</th>
+            </tr>
+          </thead>
+          <tbody></tbody>
+        </table>
+        <div id="sensEmpty" class="muted">Click "Load Sensitivity" to view pre-computed results…</div>
+      </div>
+    </div>
+
+    <div class="section">Created by David A. Kimmel. <br> GEOG 777, Fall 2025
+    </div>
+  </aside>
+
+  <main id="map"></main>
+
+  <!-- Always-visible sidebar opener -->
+  <button id="sidebarPeek" class="sidebar-peek" aria-label="Open sidebar" title="Open sidebar">
+    ⇨
+  </button>
+
+  <footer class="bottombar">
+    <div id="status">Ready.</div>
+  </footer>
+
+  <script src="https://unpkg.com/leaflet/dist/leaflet.js"></script>
+  <script src="https://unpkg.com/leaflet.markercluster@1.5.3/dist/leaflet.markercluster.js"></script>
+  <script src="ui.js"></script>
+
+  <!-- About Modal -->
+  <div id="aboutModal" class="modal" aria-hidden="true" role="dialog" aria-labelledby="aboutTitle">
+    <div class="modal-dialog">
+      <button class="modal-close" id="aboutClose" aria-label="Close">×</button>
+      <h2 id="aboutTitle">About this Explorer</h2>
+      <div class="modal-body">
+        <h3>Data dictionary</h3>
+        <ul class="dd">
+          <li><b>Tract cancer rate</b> — age-adjusted incidence per 100,000.</li>
+          <li><b>Well nitrate (mg/L)</b> — source measurements aggregated to tracts.</li>
+          <li><b>IDW raster</b> — nitrate surface interpolated from wells.</li>
+          <li><b>Jenks classes</b> — 5-class natural breaks of tract cancer rates.</li>
+          <li><b>OLS summary</b> — regression of cancer rate ~ nitrate (tract mean).</li>
+        </ul>
+        <h3>Why Jenks?</h3>
+        <p>Jenks natural breaks maximize within-class similarity and between-class differences. For skewed rates, it’s
+          often clearer than equal intervals.</p>
+        <h3>Interpretation guidance</h3>
+        <p><b>Small positive slope, low R²</b> → weak linear association: higher nitrate tends to align with higher
+          cancer rates, but the model explains little variance. Treat as a hypothesis generator, not a causal claim.</p>
+        <h3>About this demo</h3>
+        <p>This is a <b>static version</b> showcasing pre-computed results. The full Python/Flask application with live IDW computation is available in the <a href="https://github.com/yourusername/yourrepo" target="_blank">source repository</a>.</p>
+      </div>
+    </div>
+  </div>
+
+</body>
+
+</html>

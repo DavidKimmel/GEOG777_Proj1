@@ -1,7 +1,7 @@
 // ui.js — GEOG 577 Project 1 (Flask + Leaflet)
 // IDW → zonal → OLS with raster overlay
 // Jenks(5) choropleth, raster z-order toggle, sensitivity table,
-// sidebar collapse, zoom on right, on-map hamburger panel with Legend + OLS summary.
+// sidebar collapse, zoom on right, on-map hamburger panel with Legend + OLS summary + sparkline.
 
 (function () {
   // ---------- small helpers ----------
@@ -14,8 +14,13 @@
   function setBusy(isBusy) {
     const runBtn = document.getElementById('run');
     const sensBtn = document.getElementById('runSens');
-    if (runBtn)  { runBtn.disabled = isBusy;  runBtn.textContent  = isBusy ? 'Running…'  : 'Run'; }
-    if (sensBtn) { sensBtn.disabled = isBusy; sensBtn.textContent = isBusy ? 'Working…' : 'Sensitivity'; }
+    const spin = document.getElementById('spinner');
+    if (runBtn)  { runBtn.disabled = isBusy;  runBtn.textContent  = isBusy ? 'Running...'  : 'Run'; }
+    if (sensBtn) { sensBtn.disabled = isBusy; sensBtn.textContent = isBusy ? 'Working...' : 'Sensitivity'; }
+    if (spin) {
+      spin.classList.toggle('show', !!isBusy);
+      spin.setAttribute('aria-hidden', (!isBusy).toString());
+    }
   }
   function withTimeout(ms=60000){
     const ctrl = new AbortController();
@@ -62,7 +67,6 @@
     for (; i < breaks.length; i++) { if (value <= breaks[i]) return i; }
     return breaks.length;
   }
-  // Jenks (natural breaks) thresholds array length k-1
   function jenksThresholds(values, k) {
     const data = values.filter(Number.isFinite).slice().sort((a,b)=>a-b);
     const n = data.length;
@@ -114,14 +118,13 @@
     return uniq;
   }
 
-  // helper to write the same HTML into multiple containers
   function setHTML(idList, html) {
     idList.forEach(id => { const el = document.getElementById(id); if (el) el.innerHTML = html; });
   }
 
   // ---------- page setup ----------
   document.addEventListener('DOMContentLoaded', async () => {
-    setStatus('Booting UI…');
+    setStatus('Booting UI...');
 
     // map + base layers
     const map = L.map('map', { zoomControl: false }).setView([44.5, -89.9], 7);
@@ -133,7 +136,7 @@
     base.osm.addTo(map);
     L.control.zoom({ position: 'topright' }).addTo(map);
 
-    // dedicated pane for IDW raster
+    // pane for IDW raster
     map.createPane('idwPane');
     map.getPane('idwPane').style.zIndex = 380; // below vectors by default
 
@@ -160,7 +163,7 @@
     const dlSens     = document.getElementById('dlSens');
     const statsEl    = document.getElementById('stats');
 
-    // sensitivity table targets (if present)
+    // sensitivity table targets
     const sensTable  = document.getElementById('sensTable');
     const sensTbody  = sensTable ? sensTable.querySelector('tbody') : null;
     const sensEmpty  = document.getElementById('sensEmpty');
@@ -175,7 +178,7 @@
     let tractsLayer = null, wellsLayer = null, wellsCluster = null;
     let tractsBreaks = null, tractsColors = ramp(5);
 
-    // ---------- on-map info panel + hamburger (mounted inside the map) ----------
+    // ---------- on-map info panel + hamburger ----------
     const infoPanel = document.createElement('div');
     infoPanel.className = 'map-panel';
     infoPanel.innerHTML = `
@@ -187,6 +190,7 @@
       <div class="section">
         <h4>Analysis summary</h4>
         <div id="map-ols"></div>
+        <div id="sens-sparkline" class="sparkline" aria-label="Sensitivity sparkline"></div>
         <details>
           <summary>What do these mean?</summary>
           <div style="font-size:.9rem; color: var(--muted); line-height:1.35;">
@@ -205,12 +209,19 @@
     const InfoControl = L.Control.extend({
       onAdd: function() {
         const btn = L.DomUtil.create('button', 'map-toggle');
-        btn.type = 'button'; btn.title = 'Map info'; btn.innerHTML = '☰';
-        L.DomEvent.on(btn, 'click', (e) => { L.DomEvent.stopPropagation(e); infoPanel.classList.toggle('open'); setTimeout(()=>map.invalidateSize(),200); });
+        btn.type = 'button';
+        btn.title = 'Map overlay';
+        btn.setAttribute('aria-label','Map overlay');
+        btn.innerHTML = '☰';
+        L.DomEvent.on(btn, 'click', (e) => {
+          L.DomEvent.stopPropagation(e);
+          infoPanel.classList.toggle('open');
+          setTimeout(()=>map.invalidateSize(),200);
+        });
         return btn;
       }, onRemove: function() {}
     });
-    map.addControl(new InfoControl({ position: 'topleft' }));
+    map.addControl(new InfoControl({ position: 'bottomleft' }));
     L.DomEvent.disableClickPropagation(infoPanel);
     L.DomEvent.on(infoPanel, 'mousewheel', L.DomEvent.stopPropagation);
     map.on('click', () => infoPanel.classList.remove('open'));
@@ -328,7 +339,7 @@
       if (wellsLayer) wellsLayer.remove();
       if (wellsCluster) wellsCluster.remove();
 
-      const size = parseInt(pointSize?.value ?? '4', 10); // smaller default
+      const size = parseInt(pointSize?.value ?? '4', 10);
       const makeMarker = (f, latlng) => {
         const v = Number(f.properties?.nitr_ran);
         const color = getWellColor(v);
@@ -401,34 +412,7 @@
       } catch (err) { console.error('handleRunResult runtime error', err, data); }
     }
 
-    // ---------- actions ----------
-    async function runIDW() {
-      setBusy(true);
-      try {
-        setStatus('Running IDW…');
-        const k = parseFloat(kslider.value);
-        const neighbors = parseInt(neighborsEl.value, 10);
-        const cell = parseInt(cellEl.value, 10);
-
-        const t = withTimeout(60000);
-        const res = await fetch(`${location.origin}/api/run`, {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          cache: 'no-store',
-          body: JSON.stringify({ k, neighbors, cell_size: cell }),
-          signal: t.signal
-        });
-        t.done();
-
-        if (!res.ok) throw new Error(`API /api/run ${res.status}`);
-        const data = await res.json();
-        handleRunResult(data, k);
-        setStatus('Done.');
-      } catch (err) {
-        console.error(err); setStatus('Error.');
-      } finally { setBusy(false); }
-    }
-
+    // ---------- sensitivity UI ----------
     function renderSensitivityTable(rows) {
       if (!(sensTable && sensTbody && sensEmpty)) {
         if (sensTextDiv) {
@@ -468,6 +452,73 @@
       sensTable.style.display = 'table';
     }
 
+    // Tiny inline sparkline for slope vs k (≈120×28)
+    function renderSensitivitySparkline(rows) {
+      const host = document.getElementById('sens-sparkline');
+      if (!host) return;
+      host.innerHTML = '';
+      if (!Array.isArray(rows) || rows.length === 0) return;
+
+      const pts = rows
+        .map(r => ({ k: Number(r.k), slope: Number(r.slope) }))
+        .filter(p => Number.isFinite(p.k) && Number.isFinite(p.slope))
+        .sort((a,b)=>a.k-b.k);
+      if (!pts.length) return;
+
+      const W = 120, H = 28, pad = 4;
+      const ks = pts.map(p=>p.k);
+      const ss = pts.map(p=>p.slope);
+      const kMin = Math.min(...ks), kMax = Math.max(...ks);
+      const sMin = Math.min(...ss), sMax = Math.max(...ss);
+      const x = (v)=> pad + (W-2*pad) * ((v - kMin) / (kMax - kMin || 1));
+      const y = (v)=> {
+        if (sMax === sMin) return H/2;
+        return H - pad - (H-2*pad) * ((v - sMin) / (sMax - sMin));
+      };
+
+      // Polyline path
+      const path = pts.map((p,i)=> (i? 'L':'M') + x(p.k).toFixed(1) + ',' + y(p.slope).toFixed(1)).join(' ');
+
+      // Optional baseline at y=0
+      const zeroInRange = (sMin <= 0 && sMax >= 0);
+      const zeroY = y(0);
+
+      const svg = document.createElementNS('http://www.w3.org/2000/svg','svg');
+      svg.setAttribute('viewBox', `0 0 ${W} ${H}`);
+      svg.setAttribute('width', W);
+      svg.setAttribute('height', H);
+      svg.setAttribute('role','img');
+      svg.setAttribute('aria-label','Slope vs k sparkline');
+
+      if (zeroInRange) {
+        const base = document.createElementNS(svg.namespaceURI,'line');
+        base.setAttribute('x1', pad); base.setAttribute('x2', W-pad);
+        base.setAttribute('y1', zeroY.toFixed(1)); base.setAttribute('y2', zeroY.toFixed(1));
+        base.setAttribute('stroke', 'rgba(255,255,255,0.25)');
+        base.setAttribute('stroke-width','1');
+        svg.appendChild(base);
+      }
+
+      const pl = document.createElementNS(svg.namespaceURI,'path');
+      pl.setAttribute('d', path);
+      pl.setAttribute('fill','none');
+      pl.setAttribute('stroke','rgba(77,163,255,0.9)');
+      pl.setAttribute('stroke-width','1.5');
+      svg.appendChild(pl);
+
+      // tiny end dots for readability
+      pts.forEach(p=>{
+        const c = document.createElementNS(svg.namespaceURI,'circle');
+        c.setAttribute('cx', x(p.k).toFixed(1));
+        c.setAttribute('cy', y(p.slope).toFixed(1));
+        c.setAttribute('r','1.8');
+        c.setAttribute('fill','rgba(77,163,255,0.9)');
+        svg.appendChild(c);
+      });
+
+      host.appendChild(svg);
+    }
+
     function parseSensitivityText(textBlob) {
       const rows = [];
       const re = /k\s*=\s*([\d.]+).*?n\s*=\s*(\d+).*?R\^?2\s*=\s*([\d.]+).*?slope\s*=\s*([-\d.]+).*?p\s*=\s*([0-9eE+.\-]+).*?CI\s*=\s*\[\s*([-\d.]+)\s*,\s*([-\d.]+)\s*\]/g;
@@ -481,7 +532,7 @@
     async function runSensitivity() {
       setBusy(true);
       try {
-        setStatus('Running sensitivity…');
+        setStatus('Running sensitivity...');
         const ks = [1.0, 1.5, 2.0, 2.5, 3.0];
         const neighbors = parseInt(neighborsEl.value, 10) || 12;
         const cell = parseInt(cellEl.value, 10) || 1000;
@@ -502,6 +553,7 @@
         let rows = Array.isArray(data.rows) ? data.rows : null;
         if (!rows) rows = parseSensitivityText(data.text || data.summary || '');
         renderSensitivityTable(rows);
+        renderSensitivitySparkline(rows);
 
         if (dlSens && data.csv) { dlSens.href = data.csv; dlSens.textContent = 'Download Sensitivity CSV'; }
         setStatus('Done.');
@@ -509,7 +561,7 @@
       finally { setBusy(false); }
     }
 
-    // ---------- event wiring ----------
+    // ---------- events ----------
     if (rasterToggle) rasterToggle.checked = true;
     if (rasterOpacity) rasterOpacity.addEventListener('input', () => setRasterOpacity(rasterOpacity.value));
     if (rasterToggle)  rasterToggle.addEventListener('change', () => setRasterVisible(rasterToggle.checked));
@@ -550,39 +602,44 @@
       map.invalidateSize();
     });
 
-    if (runBtn)  runBtn.addEventListener('click', runIDW);
+    if (runBtn)  runBtn.addEventListener('click', async () => {
+      await runIDW();
+      // after a run, keep overlay honest (legend & summary already update)
+    });
     if (sensBtn) sensBtn.addEventListener('click', runSensitivity);
 
-    // Sidebar collapse/expand with persistence (and Alt+S shortcut)
-    let sidebarToggle = document.getElementById('sidebarToggle');
-    if (!sidebarToggle) {
-      const sidebar = document.getElementById('sidebar');
-      if (sidebar) {
-        sidebarToggle = document.createElement('button');
-        sidebarToggle.id = 'sidebarToggle';
-        sidebarToggle.className = 'sidebar-toggle';
-        sidebarToggle.setAttribute('aria-expanded', 'true');
-        sidebarToggle.setAttribute('aria-label', 'Collapse sidebar');
-        sidebarToggle.textContent = '⇦';
-        sidebar.prepend(sidebarToggle);
+    // Sidebar collapse/expand (button, peek, hotkey, persistence)
+    const sidebar       = document.getElementById('sidebar');
+    const sidebarToggle = document.getElementById('sidebarToggle');
+    const sidebarPeek   = document.getElementById('sidebarPeek');
+
+    function isCollapsed() {
+      return document.body.classList.contains('sidebar-collapsed');
+    }
+    function setSidebar(collapsed) {
+      document.body.classList.toggle('sidebar-collapsed', !!collapsed);
+      if (sidebarToggle) {
+        sidebarToggle.setAttribute('aria-expanded', (!collapsed).toString());
+        sidebarToggle.textContent = collapsed ? '⇨' : '⇦';
+        sidebarToggle.title = collapsed ? 'Open sidebar' : 'Collapse sidebar';
+      }
+      try { localStorage.setItem('sidebarCollapsed', collapsed ? '1' : '0'); } catch {}
+      if (typeof map !== 'undefined' && map && map.invalidateSize) {
+        setTimeout(() => map.invalidateSize(), 220);
       }
     }
-    if (sidebarToggle) {
-      const toggleSidebar = () => {
-        const now = !document.body.classList.contains('sidebar-collapsed');
-        document.body.classList.toggle('sidebar-collapsed', now);
-        localStorage.setItem('sidebarCollapsed', now ? '1' : '0');
-        sidebarToggle.setAttribute('aria-expanded', (!now).toString());
-        setTimeout(() => map.invalidateSize(), 220);
-      };
-      const collapsed = localStorage.getItem('sidebarCollapsed') === '1';
-      document.body.classList.toggle('sidebar-collapsed', collapsed);
-      sidebarToggle.setAttribute('aria-expanded', (!collapsed).toString());
-      setTimeout(() => map.invalidateSize(), 220);
-      sidebarToggle.addEventListener('click', toggleSidebar);
-      sidebarToggle.addEventListener('keydown', (e) => { if (e.key === ' ' || e.key === 'Enter') { e.preventDefault(); toggleSidebar(); } });
-      document.addEventListener('keydown', (e) => { if (e.altKey && (e.key === 's' || e.key === 'S')) { e.preventDefault(); toggleSidebar(); } });
-    }
+    if (sidebarToggle) sidebarToggle.addEventListener('click', () => setSidebar(!isCollapsed()));
+    if (sidebarPeek)   sidebarPeek.addEventListener('click',   () => setSidebar(false));
+    document.addEventListener('keydown', (e) => {
+      if (e.altKey && (e.key === 's' || e.key === 'S')) {
+        e.preventDefault();
+        setSidebar(!isCollapsed());
+      }
+    });
+    try {
+      const saved = localStorage.getItem('sidebarCollapsed');
+      setSidebar(saved === '1');
+    } catch { setSidebar(false); }
 
     // Clear raster (ensure button exists)
     let clearBtn = document.getElementById('clearRasters');
@@ -604,6 +661,7 @@
     renderWellLegend();
 
     setStatus('Ready.');
+
     // About modal wiring
     (function(){
       const aboutBtn = document.getElementById('aboutBtn');
@@ -620,6 +678,34 @@
         document.addEventListener('keydown', (e)=>{ if (e.key === 'Escape') modal.setAttribute('aria-hidden','true'); });
       }
     })();
+
+    // helper defined after use:
+    async function runIDW() {
+      setBusy(true);
+      try {
+        setStatus('Running IDW...');
+        const k = parseFloat(kslider.value);
+        const neighbors = parseInt(neighborsEl.value, 10);
+        const cell = parseInt(cellEl.value, 10);
+
+        const t = withTimeout(60000);
+        const res = await fetch(`${location.origin}/api/run`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          cache: 'no-store',
+          body: JSON.stringify({ k, neighbors, cell_size: cell }),
+          signal: t.signal
+        });
+        t.done();
+
+        if (!res.ok) throw new Error(`API /api/run ${res.status}`);
+        const data = await res.json();
+        handleRunResult(data, k);
+        setStatus('Done.');
+      } catch (err) {
+        console.error(err); setStatus('Error.');
+      } finally { setBusy(false); }
+    }
 
   });
 })();

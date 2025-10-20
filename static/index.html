@@ -15,15 +15,18 @@
   <header class="topbar">
     <div class="brand">Nitrate ↔ Cancer Explorer</div>
     <div class="top-actions">
+      <!-- Small run-state indicator -->
       <div id="spinner" class="spinner" aria-hidden="true" title="Working"></div>
-      
     </div>
   </header>
 
   <aside id="sidebar">
-    <!-- Sidebar collapse handle -->
-    <div class="sidebar-head"><button id="sidebarToggle" class="sidebar-toggle" aria-expanded="true" aria-label="Collapse sidebar">⇦</button>
-      <button id="aboutBtn" class="btn btn-ghost about-inline" title="About this Explorer">About</button></div>
+    <!-- Sidebar collapse handle and About -->
+    <div class="sidebar-head">
+      <button id="sidebarToggle" class="sidebar-toggle" aria-expanded="true" aria-label="Collapse sidebar">⇦</button>
+      <button id="aboutBtn" class="btn btn-ghost about-inline" title="About this Explorer"
+        aria-label="Open About">About</button>
+    </div>
 
     <div class="section">
       <h3>Basemap</h3>
@@ -60,10 +63,12 @@
 
     <div id="analysis" class="section">
       <h3>Analysis (IDW)</h3>
-      <label class="row">k (power) <input id="k" type="range" min="1.1" max="5" step="0.1" value="2.0" />
+      <label class="row" title="IDW power; higher = nearer points weigh more">k (power) <input id="k" type="range"
+          min="1.1" max="5" step="0.1" value="2.0" />
         <span id="kval">2.0</span></label>
-      <label class="row">Neighbors <input id="neighbors" type="number" min="4" max="32" value="12" /></label>
-      <label class="row">Cell size (m)
+      <label class="row" title="Number of neighboring wells considered in each interpolation">Neighbors <input
+          id="neighbors" type="number" min="4" max="32" value="12" /></label>
+      <label class="row" title="Grid resolution of IDW raster in meters">Cell size (m)
         <select id="cell">
           <option>500</option>
           <option selected>1000</option>
@@ -71,28 +76,28 @@
         </select>
       </label>
       <div class="buttons">
-        <button id="run">Run</button>
-        <button id="runSens">Sensitivity</button>
-        <button id="clearRasters" class="clear-raster">Clear raster</button>
-        <a class="btn" id="dlCSV" download>Download CSV</a>
-        <a class="btn" id="dlPNG" download>Download PNG</a>
-        <a class="btn" id="dlSens" download>Download Sensitivity CSV</a>
+        <button id="run" aria-label="Run IDW">Run</button>
+        <button id="runSens" aria-label="Run sensitivity sweep">Sensitivity</button>
+        <button id="clearRasters" class="clear-raster" aria-label="Clear raster">Clear raster</button>
+        <a class="btn" id="dlCSV" download aria-label="Download CSV">Download CSV</a>
+        <a class="btn" id="dlPNG" download aria-label="Download PNG">Download PNG</a>
+        <a class="btn" id="dlSens" download aria-label="Download Sensitivity CSV">Download Sensitivity CSV</a>
       </div>
       <div id="stats" class="stats"></div>
       <div id="olsPanel"></div>
 
       <!-- Sensitivity output area -->
       <div id="sensPanel">
-        <table id="sensTable" class="mini">
+        <table id="sensTable" class="mini" aria-label="Sensitivity table">
           <thead>
             <tr>
-              <th>k</th>
-              <th>n</th>
-              <th>R²</th>
-              <th>Slope</th>
-              <th>p</th>
-              <th>CI low</th>
-              <th>CI high</th>
+              <th title="IDW power">k</th>
+              <th title="Number of tracts in regression">n</th>
+              <th title="Coefficient of determination">R²</th>
+              <th title="Change in cancer rate per 1 mg/L nitrate">Slope</th>
+              <th title="p-value of slope">p</th>
+              <th title="Lower 95% CI bound">CI low</th>
+              <th title="Upper 95% CI bound">CI high</th>
             </tr>
           </thead>
           <tbody></tbody>
@@ -106,6 +111,11 @@
   </aside>
 
   <main id="map"></main>
+
+  <!-- Always-visible sidebar opener -->
+  <button id="sidebarPeek" class="sidebar-peek" aria-label="Open sidebar" title="Open sidebar">
+    ⇨
+  </button>
 
   <footer class="bottombar">
     <div id="status">Ready.</div>
@@ -130,9 +140,11 @@
           <li><b>OLS summary</b> — regression of cancer rate ~ nitrate (tract mean).</li>
         </ul>
         <h3>Why Jenks?</h3>
-        <p>Jenks natural breaks maximize within-class similarity and between-class differences. For skewed rates, it’s often clearer than equal intervals.</p>
+        <p>Jenks natural breaks maximize within-class similarity and between-class differences. For skewed rates, it’s
+          often clearer than equal intervals.</p>
         <h3>Interpretation guidance</h3>
-        <p><b>Small positive slope, low R²</b> → weak linear association: higher nitrate tends to align with higher cancer rates, but the model explains little variance. Treat as a hypothesis generator, not a causal claim.</p>
+        <p><b>Small positive slope, low R²</b> → weak linear association: higher nitrate tends to align with higher
+          cancer rates, but the model explains little variance. Treat as a hypothesis generator, not a causal claim.</p>
       </div>
     </div>
   </div>

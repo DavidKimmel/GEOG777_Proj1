@@ -1,0 +1,1 @@
+{"type": "FeatureCollection", "features": [{"type": "Feature", "geometry": {"type": "Polygon", "coordinates": [[[-92.5, 42.8], [-87.2, 42.8], [-87.2, 46.8], [-92.5, 46.8], [-92.5, 42.8]]]}, "properties": {"GEOID": "000000", "cancer_rate": null, "mean_nitrate": null}}]}
